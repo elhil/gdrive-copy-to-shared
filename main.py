@@ -8,8 +8,8 @@ SCOPES = ['https://googleapis.com/auth/drive']
 parser = argparse.ArgumentParser()
 parser.add_argument('-C', '--credentials', required=True, help='credentials.json')
 parser.add_argument('-T', '--token', required=True, help='token.json, can be empty')
-parser.add_argument('-f', '--from', help='From shared drive')
-parser.add_argument('-t', '--to', help='To team drive')
+parser.add_argument('-f', '--from_folder', help='From shared drive')
+parser.add_argument('-t', '--to_folder', help='To team drive')
 
 
 def authenticate(filename_token, filename_credentials):
@@ -30,8 +30,8 @@ def list_files_in_folder(folder_id, service):
     response = service.files().list(f'" {top_level_folder} " in parents').execute()
     return response
 
-from_id = args.from
-to_id = args.to
+from_id = args.from_folder
+to_id = args.to_folder
 
 authenticate(args.credentials, args.token)
 
