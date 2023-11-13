@@ -31,6 +31,12 @@ parser.add_argument(
     type=argparse.FileType("r"),
 )
 parser.add_argument(
+    "-c",
+    "--checksum",
+    help="compare files based on checksums rather; only works on real files, Google Docs don't have checksums",
+    action="store_true",
+)
+parser.add_argument(
     "--delete", help="delete extraneous files from dest dirs", action="store_true"
 )
 parser.add_argument(
@@ -83,7 +89,7 @@ def listdir(drive, id):
                 # by providing fields we can specify shortcutDetails which avoids an extra call when copying shortcuts
                 # and modifiedTime and size which we use when deciding whether to copy
                 # NB: you can set files(*) to see _all_ available fields
-                fields="nextPageToken, files(id, name, mimeType, size, kind, modifiedTime, shortcutDetails, sha256Checksum)",
+                fields=f"nextPageToken, files(id, name, mimeType, size, kind, modifiedTime, shortcutDetails{', sha256Checksum' if args.checksum else ''})",
             )
             .execute()
         )
@@ -216,33 +222,25 @@ def recurse_folders(drive, source, dest):
                     else None
                 )
 
-                pprint(dest_items)
-
-                # if the sizes are the same and the modification time of the right is newer, then keep the right
-                # if the sizes are different and the modification time of the right is newer, keep the left?
-                # if the sizes are the same and the modification time of the right is older, keep the left
-                # if the sizes are different and the modification time of the right is older, keep the left
-
-                # TODO: what happens
-
                 item_modified = datetime.datetime.fromisoformat(item["modifiedTime"])
                 dest_item_modified = (
                     datetime.datetime.fromisoformat(dest_item["modifiedTime"])
                     if dest_item
                     else None
                 )
-                if not (
-                    dest_item
-                    and item["mimeType"] == dest_item["mimeType"]
-                    # size is not reliable on Google drive! Google Docs files, application/vnd.google-apps.*, they don't keep a consistent size when copied:
-                    and (
-                        item["mimeType"].startswith("application/vnd.google-apps.")
-                        or item["size"] == dest_item["size"]
+
+                if (
+                    (not dest_item)
+                    or (item["mimeType"] != dest_item["mimeType"])
+                    or (
+                        args.checksum
+                        and "sha256Checksum" in item
+                        and "sha256Checksum" in dest_item
+                        and item["sha256Checksum"] != dest_item["sha256Checksum"]
                     )
-                    and item_modified < dest_item_modified
+                    or (item_modified > dest_item_modified)
                 ):
                     print("copy()")
-                    # breakpoint()
                     drive.files().copy(
                         fileId=item["id"],
                         body={
