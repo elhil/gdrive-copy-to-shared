@@ -32,6 +32,7 @@ parser.add_argument(
 parser.add_argument(
     "--delete", help="delete extraneous files from dest dirs", action="store_true"
 )
+parser.add_argument("-l", "--links", help="copy shortcuts as shortcuts", action="store_true")
 parser.add_argument(
     "source",
     help="Folder or file to copy from, e.g. https://drive.google.com/drive/folders/ 1DCwcbejwdN-Clc5bgk5CJfjo3FQaGTaQ or 1DCwcbejwdN-Clc5bgk5CJfjo3FQaGTaQ",
@@ -76,6 +77,8 @@ def listdir(drive, id):
                 q=f'"{id}" in parents and trashed = false',
                 pageSize=1000,
                 pageToken=pageToken,
+                # by providing fields we can specify shortcutDetails which avoids an extra call when copying shortcuts
+                fields="nextPageToken, files(id, name, mimeType, kind, shortcutDetails)",
             )
             .execute()
         )
@@ -109,6 +112,7 @@ def recurse_folders(drive, source, dest):
                     )
                     .execute()
                 )
+
                 q.put(
                     (
                         os.path.join(
@@ -120,8 +124,26 @@ def recurse_folders(drive, source, dest):
                         dest_item["id"],
                     )
                 )
+            elif (
+                args.links
+                and item["mimeType"] == "application/vnd.google-apps.shortcut"
+            ):
+                dest_item = (
+                    drive.files()
+                    .create(
+                        body={
+                            "name": item["name"],
+                            "mimeType": item["mimeType"],
+                            "parents": [dest],
+                            "shortcutDetails": item["shortcutDetails"],
+                        },
+                        fields="id",
+                    )
+                    .execute()
+                )
             else:
-                # copy a regular file
+                # copy a regular file (or the target of a shortcut)
+                # TODO: what happens if a shortcut points to a folder?
                 drive.files().copy(
                     fileId=item["id"],
                     body={
