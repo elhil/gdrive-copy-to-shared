@@ -73,23 +73,49 @@ def list_contents_of_folder(drive, folder_id):
     )
 
 
-def recurse_folders(drive, folder_id_top):
+def recurse_folders(drive, source, dest):
     q = queue.Queue()
 
-    q.put((folder_id_top, "./"))
-    while True:
-        if q.empty():
-            print("done")
-            return
-        else:
-            (folder_id, folder_name) = q.get()
-            response = list_contents_of_folder(drive, folder_id)
-            if getattr(response, "nextPageToken", None):
-                next_page_token = response["nextPageToken"]
-            for r in response["files"]:
-                if r["mimeType"] == "application/vnd.google-apps.folder":
-                    q.put((r["id"], os.path.join(folder_name, r["name"])))
-                print(os.path.join(folder_name, r["name"]))
+    q.put(("./", source, dest))
+    while not q.empty():
+        (folder_name, source, dest) = q.get()
+
+        for item in list_contents_of_folder(drive, source):
+            print(os.path.join(folder_name, item["name"]))
+
+            if item["mimeType"] == "application/vnd.google-apps.folder":
+                dest_item = (
+                    drive.files()
+                    .create(
+                        body={
+                            "name": item["name"],
+                            "mimeType": item["mimeType"],
+                            "parents": [dest],
+                        },
+                        fields="id",
+                    )
+                    .execute()
+                )
+                q.put(
+                    (
+                        os.path.join(
+                            folder_name,
+                            item["name"],
+                            item["id"],
+                        ),
+                        item["id"],
+                        dest_item["id"],
+                    )
+                )
+            else:
+                # copy a regular file
+                drive.files().copy(
+                    fileId=item["id"],
+                    body={
+                        "name": item["name"],
+                        "parents": [dest],
+                    },
+                ).execute()
 
 
 from_id = os.path.basename(args.source)  # TODO: input validation
@@ -119,4 +145,4 @@ creds = authenticate(user_credentials, app_credentials)
 with build("drive", "v3", credentials=creds) as service:
     # list directory for now
     # r = list_contents_of_folder(from_id, service)
-    recurse_folders(service, from_id)
+    recurse_folders(service, from_id, to_id)
