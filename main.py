@@ -1,4 +1,5 @@
 import os
+import datetime
 import argparse
 import shutil
 from pathlib import Path
@@ -32,7 +33,9 @@ parser.add_argument(
 parser.add_argument(
     "--delete", help="delete extraneous files from dest dirs", action="store_true"
 )
-parser.add_argument("-l", "--links", help="copy shortcuts as shortcuts", action="store_true")
+parser.add_argument(
+    "-l", "--links", help="copy shortcuts as shortcuts", action="store_true"
+)
 parser.add_argument(
     "source",
     help="Folder or file to copy from, e.g. https://drive.google.com/drive/folders/ 1DCwcbejwdN-Clc5bgk5CJfjo3FQaGTaQ or 1DCwcbejwdN-Clc5bgk5CJfjo3FQaGTaQ",
@@ -78,7 +81,9 @@ def listdir(drive, id):
                 pageSize=1000,
                 pageToken=pageToken,
                 # by providing fields we can specify shortcutDetails which avoids an extra call when copying shortcuts
-                fields="nextPageToken, files(id, name, mimeType, kind, shortcutDetails)",
+                # and modifiedTime and size which we use when deciding whether to copy
+                # NB: you can set files(*) to see _all_ available fields
+                fields="nextPageToken, files(id, name, mimeType, size, kind, modifiedTime, shortcutDetails, sha256Checksum)",
             )
             .execute()
         )
@@ -100,18 +105,30 @@ def recurse_folders(drive, source, dest):
             print(os.path.join(folder_name, item["name"]))
 
             if item["mimeType"] == "application/vnd.google-apps.folder":
-                dest_item = (
+                name = item["name"]
+                # TODO: use listdir() to batch this instead
+                dest_items = (
                     drive.files()
-                    .create(
-                        body={
-                            "name": item["name"],
-                            "mimeType": item["mimeType"],
-                            "parents": [dest],
-                        },
-                        fields="id",
+                    .list(
+                        q=f'"{dest}" in parents and trashed = false and name = "{name}" and mimeType = "application/vnd.google-apps.folder"',
                     )
                     .execute()
                 )
+                if len(dest_items["files"]):
+                    dest_item = dest_items["files"][0]
+                else:
+                    dest_item = (
+                        drive.files()
+                        .create(
+                            body={
+                                "name": item["name"],
+                                "mimeType": item["mimeType"],
+                                "parents": [dest],
+                            },
+                            fields="id",
+                        )
+                        .execute()
+                    )
 
                 q.put(
                     (
@@ -124,33 +141,120 @@ def recurse_folders(drive, source, dest):
                         dest_item["id"],
                     )
                 )
+
             elif (
-                args.links
+                args.links == False
                 and item["mimeType"] == "application/vnd.google-apps.shortcut"
             ):
-                dest_item = (
-                    drive.files()
-                    .create(
-                        body={
-                            "name": item["name"],
-                            "mimeType": item["mimeType"],
-                            "parents": [dest],
-                            "shortcutDetails": item["shortcutDetails"],
-                        },
-                        fields="id",
+                # copy the *contents* of a symlink
+                # print("symlink()")
+                if (
+                    item["shortcutDetails"]["targetMimeType"]
+                    == "application/vnd.google-apps.folder"
+                ):
+                    # treat it like a regular folder
+                    dest_item = (
+                        drive.files()
+                        .create(
+                            body={
+                                "name": item["name"],
+                                "mimeType": item["shortcutDetails"]["targetMimeType"],
+                                "parents": [dest],
+                            },
+                            fields="id",
+                        )
+                        .execute()
                     )
-                    .execute()
-                )
+
+                    q.put(
+                        (
+                            os.path.join(
+                                folder_name,
+                                item["name"],
+                                item["id"],
+                            ),
+                            item["shortcutDetails"]["targetId"],
+                            dest_item["id"],
+                        )
+                    )
+                else:
+                    dest_item = (
+                        drive.files()
+                        .copy(
+                            fileId=item["shortcutDetails"]["targetId"],
+                            body={
+                                "name": item["name"],
+                                "parents": [dest],
+                            },
+                        )
+                        .execute()
+                    )
             else:
                 # copy a regular file (or the target of a shortcut)
                 # TODO: what happens if a shortcut points to a folder?
-                drive.files().copy(
-                    fileId=item["id"],
-                    body={
-                        "name": item["name"],
-                        "parents": [dest],
-                    },
-                ).execute()
+
+                # To decide if we need to copy:
+                # - is the size different?
+                # - is the modification time on the old file newer?
+
+                name = item["name"]
+                # TODO: use listdir() to batch this instead
+                dest_items = (
+                    drive.files()
+                    .list(
+                        q=f'"{dest}" in parents and trashed = false and name = "{name}"',
+                        fields="files(id, mimeType, modifiedTime, size, sha256Checksum)",
+                    )
+                    .execute()
+                )
+
+                # TODO: Google Drive allows multiple files with the same name in a folder
+                #   is there a way we can handle matching up which file is supposed to be which?
+                dest_item = (
+                    dest_items["files"][0]
+                    if dest_items and len(dest_items["files"])
+                    else None
+                )
+
+                pprint(dest_items)
+
+                # if the sizes are the same and the modification time of the right is newer, then keep the right
+                # if the sizes are different and the modification time of the right is newer, keep the left?
+                # if the sizes are the same and the modification time of the right is older, keep the left
+                # if the sizes are different and the modification time of the right is older, keep the left
+
+                # TODO: what happens
+
+                item_modified = datetime.datetime.fromisoformat(item["modifiedTime"])
+                dest_item_modified = (
+                    datetime.datetime.fromisoformat(dest_item["modifiedTime"])
+                    if dest_item
+                    else None
+                )
+                if not (
+                    dest_item
+                    and item["mimeType"] == dest_item["mimeType"]
+                    # size is not reliable on Google drive! Google Docs files, application/vnd.google-apps.*, they don't keep a consistent size when copied:
+                    and (
+                        item["mimeType"].startswith("application/vnd.google-apps.")
+                        or item["size"] == dest_item["size"]
+                    )
+                    and item_modified < dest_item_modified
+                ):
+                    print("copy()")
+                    # breakpoint()
+                    drive.files().copy(
+                        fileId=item["id"],
+                        body={
+                            "name": item["name"],
+                            "parents": [dest],
+                        },
+                    ).execute()
+
+                    # delete(!) the other(s) with the same name
+                    for f in dest_items["files"]:
+                        print("delete()")
+                        drive.files().delete(fileId=f["id"]).execute()
 
 
 from_id = os.path.basename(args.source)  # TODO: input validation
