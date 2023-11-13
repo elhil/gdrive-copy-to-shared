@@ -240,6 +240,11 @@ def recurse_folders(drive, source, dest):
                     )
                     or (item_modified > dest_item_modified)
                 ):
+                    # delete(!) the other(s) with the same name
+                    for f in dest_items["files"]:
+                        print("delete()")
+                        drive.files().delete(fileId=f["id"]).execute()
+
                     print("copy()")
                     drive.files().copy(
                         fileId=item["id"],
@@ -248,11 +253,6 @@ def recurse_folders(drive, source, dest):
                             "parents": [dest],
                         },
                     ).execute()
-
-                    # delete(!) the other(s) with the same name
-                    for f in dest_items["files"]:
-                        print("delete()")
-                        drive.files().delete(fileId=f["id"]).execute()
 
 
 from_id = os.path.basename(args.source)  # TODO: input validation
