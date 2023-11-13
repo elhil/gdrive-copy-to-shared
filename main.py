@@ -67,10 +67,23 @@ def authenticate(filename_token, filename_credentials):
 args = parser.parse_args()
 
 
-def list_contents_of_folder(drive, folder_id):
-    return (
-        drive.files().list(q=f'"{folder_id}" in parents and trashed = false').execute()
-    )
+def listdir(drive, id):
+    pageToken = None
+    while True:
+        response = (
+            drive.files()
+            .list(
+                q=f'"{id}" in parents and trashed = false',
+                pageSize=1000,
+                pageToken=pageToken,
+            )
+            .execute()
+        )
+        yield from response["files"]
+        pageToken = response.get("nextPageToken", None)
+        if not pageToken:
+            break
+
 
 
 def recurse_folders(drive, source, dest):
@@ -80,7 +93,7 @@ def recurse_folders(drive, source, dest):
     while not q.empty():
         (folder_name, source, dest) = q.get()
 
-        for item in list_contents_of_folder(drive, source):
+        for item in listdir(drive, source):
             print(os.path.join(folder_name, item["name"]))
 
             if item["mimeType"] == "application/vnd.google-apps.folder":
