@@ -1,32 +1,58 @@
-# Google shared drive to Google TeamDrive via reparenting
-
-Requires:
-- Permissions to a shared drive you want to copy from
-- A google workspace account (possibly administrative?)
-
 ## Initial setup
 
-(described at length in https://martinheinz.dev/blog/84)
+## Sending emails
 
-You will need to create a Google Cloud Project, via cloud resource manager (https://console.cloud.google.com/cloud-resource-manager/#rationale) or cli `gcloud projects create PROJECT_NAME`
+### From the email address that will be used to contact all owners:
+### 1. Create a Cloud project: https://console.cloud.google.com/projectcreate
+### 2. Enable Gmail API: https://console.cloud.google.com/apis/library/gmail.googleapis.com ­→ `ENABLE`
+### 3. Create OAuth client: https://console.cloud.google.com/auth/clients/create
+  - This will prompt you to create "Branding" for this "app"
+  ![consent screen](docs/3-configure-consent-screen.png)
+#### 3a. Creating the "app"
+  - Fill out all info and press "Create"
+  - Name the app "NeuroPoly Drive Migration"
+  - For the audience, choose "External"
 
-The only API you need to enable here is the drive API, I started with read-only to test but you will want full read-write access.
+  !["branding"](docs/3a-branding-external.png)
+#### 3b. Press "Create OAuth Client"
+![Create client](docs/3b-create-client.png)
+#### 3c. Select "Desktop app" as "Application Type"
+![Create "app"](docs/3c-create-desktop-app.png)
 
-(expand on oauth, etc. later)
+#### 3d. Create the app and select "Download JSON". Save this as `client_secret.json` in the `gdrive-copy-to-shared` directory
+![alt text](docs/3d-download-json.png)
 
-save oauth credentials as a json file to be callable via the script.
+- *Note*: If you miss this download, you can download from the [client list](https://console.cloud.google.com/auth/clients)
+  using the download icon under "Actions"
 
-## To run
+#### 3e. Add yourself as a test user
+
+Under [Audience](https://console.cloud.google.com/auth/audience?inv=1&invt=AbtALA&project=gdrive-email-test&supportedpurview=project)
+→ Test users, click the `Add users` button
+
+### 4. Make sure `owners.csv` is accessible to the script
+
+Run `main.py` or obtain a copy.
+
+### 5. Run the command to generate drafts to all file owners
+
+#### 5a. From the share link of the drive folder, get the ID and resource key
+
+The share link will be of the form
 
 ```
-touch token.json # this will be populated as needed by the authentication
-python3 main.py -C [CREDENTIALS_FILE.json] -T token.json -f [SHARED_DRIVE] -t [TEAM_DRIVE]
+https://drive.google.com/drive/folders/[[FOLDER_ID]]?resourcekey=[[RESOURCE_KEY]]&usp=sharing
 ```
 
-## Extremely helpful links
+#### 5b. Run the script
 
-- https://martinheinz.dev/blog/84
-  - the author presents super helpful information about how to make use of the google api via python
-- https://stackoverflow.com/questions/30716568/how-can-i-make-a-copy-of-a-file-in-google-drive-via-python/70890884#70890884
-- https://developers.google.com/drive/api/reference/rest/v3/files
-  - the python api is largely based on the underlying rest api
+Replace:
+- `YOUR_EMAIL`: the Google account that created the OAuth client, etc, above
+- `DRIVE_FOLDER`: the FOLDER_ID in step 5a
+- `RESOURCE_KEY`: the RESOURCE_KEY in step 5a
+- `OWNER_EMAIL`: the email to instruct recipients to transfer ownership to. This must be an email
+  that is not in any Google Workspace domain
+
+```
+python compose_emails.py -f YOUR_EMAIL --drive-folder "DRIVE_FOLDER" --resource-key "RESOURCE_KEY" --owner-target-email OWNER_EMAIL
+```
